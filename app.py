@@ -9,12 +9,13 @@ import numpy as np
 from streamlit_image_comparison import image_comparison
 
 # ==========================================
-# CẤU HÌNH CỐ ĐỊNH
+# CẤU HÌNH
 # ==========================================
-MAX_SIZE = 768    # Cố định kích thước tối đa (px)
-MODEL_FILENAME = "best_model.pth" # Tên file model mặc định
+# Hugging Face Free CPU hơi yếu, ta giảm Max Size xuống một chút để không bị đơ
+MAX_SIZE = 480 
+MODEL_FILENAME = "best_model.pth"
 
-# Cấu hình Model (Khớp với file train)
+# Cấu hình Model (KHỚP VỚI FILE TRAIN)
 NUM_BLOCKS = [3, 4, 4, 6]
 NUM_HEADS = [1, 2, 2, 4]
 CHANNELS = [32, 64, 128, 256]
@@ -23,7 +24,7 @@ NUM_REFINEMENT = 2
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# --- ĐỊNH NGHĨA MODEL RESTORMER (Giữ nguyên) ---
+# --- ĐỊNH NGHĨA MODEL RESTORMER ---
 class MDTA(nn.Module):
     def __init__(self, channels, num_heads):
         super(MDTA, self).__init__()
@@ -108,16 +109,15 @@ class Restormer(nn.Module):
 # ==========================================
 
 @st.cache_resource
-def load_model(model_path):
-    if not os.path.exists(model_path):
+def load_model():
+    if not os.path.exists(MODEL_FILENAME):
         return None
     
-    # Khởi tạo kiến trúc model
+    # Khởi tạo model
     model = Restormer(NUM_BLOCKS, NUM_HEADS, CHANNELS, NUM_REFINEMENT, EXPANSION_FACTOR)
     
-    # --- SỬA LỖI TẠI ĐÂY ---
-    # Load weights với weights_only=False để tránh lỗi UnpicklingError trên PyTorch 2.6+
-    checkpoint = torch.load(model_path, map_location=DEVICE, weights_only=False)
+    # FIX LỖI Weights Only tại đây
+    checkpoint = torch.load(MODEL_FILENAME, map_location=DEVICE, weights_only=False)
     
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -131,7 +131,7 @@ def load_model(model_path):
 def process_image(img_pil, model):
     w_orig, h_orig = img_pil.size
     
-    # 1. Resize nếu quá to (Cố định MAX_SIZE = 800)
+    # Resize nếu quá to
     if w_orig > MAX_SIZE or h_orig > MAX_SIZE:
         scale = min(MAX_SIZE/w_orig, MAX_SIZE/h_orig)
         new_w = int(w_orig * scale)
@@ -140,7 +140,7 @@ def process_image(img_pil, model):
     
     w, h = img_pil.size
     
-    # 2. Pad ảnh cho chia hết cho 8
+    # Pad ảnh
     new_w = ((w + 7) // 8) * 8
     new_h = ((h + 7) // 8) * 8
     pad_w = new_w - w
@@ -149,11 +149,11 @@ def process_image(img_pil, model):
     img_tensor = TF.to_tensor(img_pil).unsqueeze(0).to(DEVICE)
     img_tensor = F.pad(img_tensor, (0, pad_w, 0, pad_h), 'reflect')
     
-    # 3. Inference
+    # Inference
     with torch.no_grad():
         output = model(img_tensor)
         
-    # 4. Post-process
+    # Post-process
     output = output[:, :, :h, :w]
     output = torch.clamp(output, 0, 1)
     output_pil = TF.to_pil_image(output.squeeze(0).cpu())
@@ -161,36 +161,41 @@ def process_image(img_pil, model):
     return img_pil, output_pil
 
 # ==========================================
-# GIAO DIỆN STREAMLIT
+# GIAO DIỆN
 # ==========================================
 
-st.set_page_config(page_title="Restormer Demo", layout="centered")
-st.title("🌧️ Demo Single Image Deraining (Restormer)")
+st.set_page_config(page_title="Restormer Deraining", layout="centered")
+st.title("🌧️ Khử Mưa - Restormer AI")
+st.caption(f"Running on: {DEVICE} (Max size: {MAX_SIZE}px)")
 
-# Load Model tự động
-model = load_model(MODEL_FILENAME)
+# Load Model
+try:
+    model = load_model()
+except Exception as e:
+    st.error(f"Lỗi load model: {e}")
+    model = None
 
 if model is None:
-    st.error(f"⚠️ Không tìm thấy file '{MODEL_FILENAME}'. Hãy đặt file model vào cùng thư mục với code hoặc sửa `MODEL_FILENAME`.")
+    st.warning(f"⚠️ Đang tìm file `{MODEL_FILENAME}`... Vui lòng upload file model vào Space.")
 else:
-    uploaded_file = st.file_uploader("Upload ảnh của bạn", type=["jpg", "jpeg", "png"])
+    uploaded_file = st.file_uploader("Upload ảnh mưa:", type=["jpg", "jpeg", "png"])
 
     if uploaded_file is not None:
         input_image = Image.open(uploaded_file).convert('RGB')
         
-        if st.button("🚀 Xử lý ngay"):
-            with st.spinner("Đang xử lý..."):
+        if st.button("🚀 Bắt đầu khử mưa"):
+            with st.spinner("Model đang chạy..."):
                 try:
                     img_in, img_out = process_image(input_image, model)
                     
-                    st.success("Hoàn tất!")
+                    st.success("Xử lý xong!")
                     
-                    # Thanh trượt so sánh
+                    # Component so sánh
                     image_comparison(
                         img1=img_in,
                         img2=img_out,
-                        label1="Input",
-                        label2="Output",
+                        label1="Ảnh Gốc",
+                        label2="Ảnh Sạch",
                         width=700,
                         starting_position=50,
                         show_labels=True,
@@ -202,7 +207,7 @@ else:
                     from io import BytesIO
                     buf = BytesIO()
                     img_out.save(buf, format="PNG")
-                    st.download_button("📥 Tải ảnh kết quả", buf.getvalue(), "clean_image.png", "image/png")
+                    st.download_button("📥 Tải ảnh về", buf.getvalue(), "clean_image.png", "image/png")
                     
                 except Exception as e:
-                    st.error(f"Lỗi: {e}")
+                    st.error(f"Lỗi xử lý: {e}")
