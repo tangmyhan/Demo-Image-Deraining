@@ -11,7 +11,7 @@ from streamlit_image_comparison import image_comparison
 # ==========================================
 # CẤU HÌNH CỐ ĐỊNH
 # ==========================================
-MAX_SIZE = 800  # Cố định kích thước tối đa (px)
+MAX_SIZE = 768    # Cố định kích thước tối đa (px)
 MODEL_FILENAME = "best_model.pth" # Tên file model mặc định
 
 # Cấu hình Model (Khớp với file train)
@@ -108,15 +108,22 @@ class Restormer(nn.Module):
 # ==========================================
 
 @st.cache_resource
-def load_model():
-    if not os.path.exists(MODEL_FILENAME):
+def load_model(model_path):
+    if not os.path.exists(model_path):
         return None
+    
+    # Khởi tạo kiến trúc model
     model = Restormer(NUM_BLOCKS, NUM_HEADS, CHANNELS, NUM_REFINEMENT, EXPANSION_FACTOR)
-    checkpoint = torch.load(MODEL_FILENAME, map_location=DEVICE)
+    
+    # --- SỬA LỖI TẠI ĐÂY ---
+    # Load weights với weights_only=False để tránh lỗi UnpicklingError trên PyTorch 2.6+
+    checkpoint = torch.load(model_path, map_location=DEVICE, weights_only=False)
+    
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
     else:
         model.load_state_dict(checkpoint)
+        
     model.to(DEVICE)
     model.eval()
     return model
@@ -161,10 +168,10 @@ st.set_page_config(page_title="Restormer Demo", layout="centered")
 st.title("🌧️ Demo Single Image Deraining (Restormer)")
 
 # Load Model tự động
-model = load_model()
+model = load_model(MODEL_FILENAME)
 
 if model is None:
-    st.error(f"⚠️ Không tìm thấy file `{MODEL_FILENAME}`. Hãy upload file model vào cùng thư mục với code.")
+    st.error(f"⚠️ Không tìm thấy file '{MODEL_FILENAME}'. Hãy đặt file model vào cùng thư mục với code hoặc sửa `MODEL_FILENAME`.")
 else:
     uploaded_file = st.file_uploader("Upload ảnh của bạn", type=["jpg", "jpeg", "png"])
 
